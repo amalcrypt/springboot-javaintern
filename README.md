@@ -23,7 +23,11 @@ This repository contains a Spring Boot microservice acting as a central API gate
 ## Architecture & Concurrency
 - **Statelessness**: The Spring Boot app is completely stateless. Counters, cooldowns, and notification states are stored entirely in Redis.
 - **Data Integrity**: PostgreSQL is the single source of truth for application content, but no DB transactions begin if Redis guardrails block the request. This prevents DB bloat during high-velocity spam attacks.
-- **Race Condition Prevention**: Employs atomic operations (`INCR`, `SETIFABSENT`) in Redis instead of fetch-and-update patterns, guaranteeing thread safety during concurrent load spikes (e.g., 200 bots firing at the exact same millisecond).
+- **Race Condition Prevention & Thread Safety**: 
+  To guarantee thread safety for the Atomic Locks in Phase 2, the application exclusively relies on Redis atomic operations rather than Java-level synchronized blocks or database-level row locking.
+  - **Horizontal Cap**: We use `redisTemplate.opsForValue().increment(key)`. Redis processes commands sequentially in a single thread. `INCR` is an atomic operation, meaning even if 200 bots execute it at the exact same millisecond, Redis will accurately count from 1 to 200 without any race conditions or lost updates. The Java application simply checks if the atomically returned incremented value exceeds 100 and rejects the request immediately without hitting the database.
+  - **Cooldown Cap**: We use `redisTemplate.opsForValue().setIfAbsent(key, value, duration)`. This directly translates to the Redis `SETNX` (Set if Not eXists) command. It atomically checks if the key exists and sets it in one operation. If multiple bots try to interact simultaneously, only the first one will receive `true` from Redis, while the others receive `false` and are blocked.
+  - **Virality Score**: Implemented using atomic `INCRBY` so concurrent likes and replies always yield the perfectly computed sum without any read-modify-write race conditions.
 
 ## Running the Application
 1. Start the infrastructure (PostgreSQL and Redis) using Docker:
